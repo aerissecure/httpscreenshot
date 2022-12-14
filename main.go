@@ -6,8 +6,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/freb/go-nmap"
@@ -23,6 +25,7 @@ import (
 // blank for each, setting them in a script at the end?:
 // https://stackoverflow.com/questions/35149719/html-image-src-call-javascript-variable
 // The goal is to combine identical images
+// - add text to the images!!!!! https://stackoverflow.com/questions/38299930/how-to-add-a-simple-text-label-to-an-image-in-go
 
 var (
 	logErr = log.New(os.Stderr, "", log.Flags()&^(log.Ldate|log.Ltime))
@@ -31,6 +34,7 @@ var (
 
 type Config struct {
 	NmapXML          []string
+	URLs             []string
 	AllHostnames     bool
 	Bin              string
 	Headless         bool
@@ -61,7 +65,6 @@ func (t *Targets) Add(targets ...*Target) {
 	// Only add unique host+port.
 	for _, target := range targets {
 		if empty {
-			fmt.Println("adding:", target)
 			*t = append(*t, target)
 			continue
 		}
@@ -72,7 +75,6 @@ func (t *Targets) Add(targets ...*Target) {
 			}
 		}
 		if !skip {
-			fmt.Println("adding:", target)
 			*t = append(*t, target)
 		}
 	}
@@ -137,6 +139,33 @@ func targetsFromNmapRun(nr nmap.NmapRun) Targets {
 	return targets
 }
 
+func targetsFromURLs(urls []string) Targets {
+	var targets Targets
+
+	for _, t := range urls {
+		u, err := url.Parse(t)
+		if err != nil {
+			logErr.Fatalf("error parsing URL target %s: %v\n", t, err)
+		}
+		port := 80
+		if u.Scheme == "https" {
+			port = 443
+		}
+		if p := u.Port(); p != "" {
+			if i, err := strconv.Atoi(p); err != nil {
+				port = i
+			}
+		}
+
+		targets.Add(&Target{
+			Scheme: u.Scheme,
+			Host:   u.Hostname(),
+			Port:   port,
+		})
+	}
+	return targets
+}
+
 var htmlIntro = `
 <!DOCTYPE html>
 <html lang="en">
@@ -166,6 +195,7 @@ var htmlImage = `
 
 func main() {
 	flaggy.StringSlice(&conf.NmapXML, "n", "nmap-xml", "Nmap XML file")
+	flaggy.StringSlice(&conf.URLs, "u", "url", "URL to Screenshot")
 	flaggy.Bool(&conf.AllHostnames, "a", "all-hostnames", "Use all known hostnames")
 	flaggy.String(&conf.Bin, "b", "bin", "Path to Chrome binary")
 	flaggy.Bool(&conf.Headless, "", "headless", "Run Chrome in headless mode")
@@ -199,6 +229,8 @@ func main() {
 			fmt.Println("targets:", targets)
 		}
 	}
+
+	targets.Add(targetsFromURLs(conf.URLs)...)
 
 	if len(targets) == 0 {
 		logErr.Fatalln("error, no targets specified")
